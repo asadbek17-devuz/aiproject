@@ -1,0 +1,412 @@
+// AI Academy — data model
+// Money is stored in tiyin (1 so'm = 100 tiyin) as integers.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  TEACHER
+  STUDENT
+}
+
+enum AccessStatus {
+  ACTIVE
+  GRACE
+  RESTRICTED
+}
+
+enum SubscriptionPlan {
+  NONE
+  STARTER
+  PRO
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum LessonStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ScriptStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum LessonSessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+enum HomeworkStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+enum SubmissionStatus {
+  PENDING
+  AI_REVIEWED
+  REVIEWED
+  GRADED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentProviderKind {
+  DEMO
+  PAYME
+  CLICK
+  STRIPE
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  PAYMENT
+  LESSON
+  HOMEWORK
+}
+
+enum AiProvider {
+  OPENROUTER
+  GROQ
+  MOCK
+}
+
+enum AdaptiveLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum LearningTrack {
+  FRONTEND
+  BACKEND
+  FULLSTACK
+}
+
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  name               String
+  passwordHash       String
+  role               Role             @default(STUDENT)
+  accessStatus       AccessStatus     @default(ACTIVE)
+  subscriptionPlan   SubscriptionPlan @default(NONE)
+  subscriptionEndsAt DateTime?
+  adaptiveLevel      AdaptiveLevel    @default(BEGINNER)
+  learningTrack      LearningTrack    @default(FULLSTACK)
+  learningTrackKey   String           @default("WEB_DEVELOPER")
+  onboardingCompleted Boolean         @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  sessions            Session[]
+  enrollments         Enrollment[]
+  lessonSessions      LessonSession[]
+  submissions         HomeworkSubmission[] @relation("SubmissionStudent")
+  reviewedSubmissions HomeworkSubmission[] @relation("SubmissionReviewer")
+  payments            Payment[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]           @relation("AuditActor")
+  taughtGroups        ScheduleGroup[]      @relation("GroupTeacher")
+  authoredHomework    Homework[]           @relation("HomeworkAuthor")
+  createdScripts      LessonScript[]       @relation("ScriptAuthor")
+  approvedScripts     LessonScript[]       @relation("ScriptApprover")
+  aiUsages            AiUsage[]
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Course {
+  id          String      @id @default(cuid())
+  slug        String      @unique
+  title       String
+  description String
+  level       CourseLevel @default(BEGINNER)
+  isPublished Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  lessons        Lesson[]
+  enrollments    Enrollment[]
+  scheduleGroups ScheduleGroup[]
+  homework       Homework[]
+}
+
+model Lesson {
+  id          String       @id @default(cuid())
+  courseId    String
+  order       Int
+  title       String
+  summary     String
+  durationMin Int          @default(60)
+  status      LessonStatus @default(DRAFT)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  scripts        LessonScript[]
+  sessions       LessonSession[]
+  homework       Homework[]
+  scheduleEvents ScheduleEvent[]
+
+  @@unique([courseId, order])
+  @@index([courseId, status])
+}
+
+model LessonScript {
+  id                 String       @id @default(cuid())
+  lessonId           String
+  version            Int          @default(1)
+  status             ScriptStatus @default(DRAFT)
+  methodologyVersion String       @default("1.0")
+  content            Json
+  createdById        String?
+  approvedById       String?
+  createdAt          DateTime     @default(now())
+  approvedAt         DateTime?
+
+  lesson     Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  createdBy  User?  @relation("ScriptAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy User?  @relation("ScriptApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@unique([lessonId, version])
+  @@index([lessonId, status])
+}
+
+model LessonSession {
+  id           String              @id @default(cuid())
+  userId       String
+  lessonId     String
+  stepIndex    Int                 @default(0)
+  status       LessonSessionStatus @default(IN_PROGRESS)
+  startedAt    DateTime            @default(now())
+  lastActiveAt DateTime            @default(now())
+  completedAt  DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId, status])
+}
+
+model Enrollment {
+  id              String    @id @default(cuid())
+  userId          String
+  courseId        String
+  progressPercent Int       @default(0)
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+model ScheduleGroup {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  days      String[]
+  startTime String
+  endTime   String
+  timezone  String   @default("Asia/Tashkent")
+  isActive  Boolean  @default(true)
+  courseId  String?
+  teacherId String?
+  createdAt DateTime @default(now())
+
+  course  Course?         @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  teacher User?           @relation("GroupTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  events  ScheduleEvent[]
+
+  @@index([courseId])
+}
+
+model ScheduleEvent {
+  id        String   @id @default(cuid())
+  groupId   String
+  lessonId  String?
+  title     String
+  date      DateTime
+  startTime String
+  endTime   String
+  createdAt DateTime @default(now())
+
+  group  ScheduleGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  lesson Lesson?       @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+
+  @@index([groupId, date])
+  @@index([date])
+}
+
+model Homework {
+  id          String         @id @default(cuid())
+  lessonId    String?
+  courseId    String?
+  title       String
+  description String
+  tasks       Json
+  dueAt       DateTime
+  status      HomeworkStatus @default(DRAFT)
+  maxScore    Int            @default(100)
+  createdById String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  lesson      Lesson?              @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  course      Course?              @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  createdBy   User                 @relation("HomeworkAuthor", fields: [createdById], references: [id])
+  submissions HomeworkSubmission[]
+
+  @@index([status, dueAt])
+  @@index([courseId])
+}
+
+model HomeworkSubmission {
+  id              String           @id @default(cuid())
+  homeworkId      String
+  studentId       String
+  content         String
+  fileName        String?
+  fileMime        String?
+  fileSize        Int?
+  status          SubmissionStatus @default(PENDING)
+  score           Int?
+  aiFeedback      Json?
+  teacherFeedback String?
+  submittedAt     DateTime         @default(now())
+  reviewedAt      DateTime?
+  reviewedById    String?
+
+  homework   Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  student    User     @relation("SubmissionStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  reviewedBy User?    @relation("SubmissionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([homeworkId, studentId])
+  @@index([studentId, status])
+}
+
+model Payment {
+  id            String              @id @default(cuid())
+  userId        String
+  invoiceNumber String              @unique
+  amount        Int
+  currency      String              @default("UZS")
+  status        PaymentStatus       @default(PENDING)
+  provider      PaymentProviderKind @default(DEMO)
+  providerRef   String?
+  description   String
+  paidAt        DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerRef])
+  @@index([userId, status])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType @default(INFO)
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([createdAt])
+}
+
+model PlatformSetting {
+  id                String     @id @default("global")
+  graceDays         Int        @default(3)
+  restrictAfterDays Int        @default(7)
+  aiProvider        AiProvider @default(GROQ)
+  aiModel           String     @default("openai/gpt-oss-120b")
+  aiTemperature     Float      @default(0.4)
+  systemPrompt      String?
+  monthlyTokenLimit Int        @default(1200000)
+  updatedAt         DateTime   @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([entity, entityId])
+}
+
+model AiUsage {
+  id               String     @id @default(cuid())
+  userId           String?
+  provider         AiProvider
+  model            String
+  purpose          String
+  promptTokens     Int        @default(0)
+  completionTokens Int        @default(0)
+  totalTokens      Int        @default(0)
+  success          Boolean    @default(true)
+  error            String?
+  createdAt        DateTime   @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([userId])
+}
